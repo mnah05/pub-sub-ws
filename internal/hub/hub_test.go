@@ -171,7 +171,7 @@ func TestConcurrentAddClients(t *testing.T) {
 			defer wg.Done()
 			c := newTestClient(id)
 			h.AddClient(c)
-		}(string(rune('a' + i%26)) + string(rune('0'+i%10)))
+		}(string(rune('a'+i%26)) + string(rune('0'+i%10)))
 	}
 	wg.Wait()
 

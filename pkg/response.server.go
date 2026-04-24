@@ -32,9 +32,9 @@ type TopicsListResponse struct {
 }
 
 type ClientsListResponse struct {
-	Type     string   `json:"type"`
+	Type    string   `json:"type"`
 	Clients []string `json:"clients"`
-	Count    int      `json:"count"`
+	Count   int      `json:"count"`
 }
 
 type ErrorResponse struct {

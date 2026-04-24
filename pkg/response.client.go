@@ -25,7 +25,7 @@ type UnsubscribeRequest struct {
 // PublishRequest broadcasts a message to topic subscribers.
 type PublishRequest struct {
 	Action  string          `json:"action" validate:"required,eq=publish"`
-Topic  string `json:"topic" validate:"required,min=1,max=256"`
+	Topic   string          `json:"topic" validate:"required,min=1,max=256"`
 	Payload json.RawMessage `json:"payload" validate:"required,max=65536"`
 }
 
