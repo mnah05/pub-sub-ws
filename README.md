@@ -1,6 +1,6 @@
  # WebSocket Pub/Sub Broker
 
-A lightweight, real-time message broker built on WebSockets. Students implement a server that routes messages between clients based on dynamic topics — no Redis, no external dependencies, just raw WebSocket connections and clean concurrency handling.
+A lightweight, real-time message broker built on WebSockets using Go (`coder/websocket`). Topics are fully dynamic — created implicitly on first subscribe/publish and destroyed automatically when the last subscriber leaves. No Redis, no external dependencies, just clean concurrency.
 
 ---
 
@@ -31,8 +31,8 @@ Join a topic to start receiving messages.
 
 **Validation:**
 - `topic` is required, non-empty string
-- `topic` maximum length: **256 bytes**
-- Silently ignored if already subscribed
+- `topic` maximum length: **256 characters**
+- Duplicate subscribes are idempotent (no error, ack still sent)
 
 ---
 
@@ -69,8 +69,8 @@ Send a message to all subscribers of a topic.
 ```
 
 **Validation:**
-- `topic` is required, non-empty string, max 256 bytes
-- `payload` is required, max **64 KB** total frame size
+- `topic` is required, non-empty string, max 256 characters
+- `payload` is required, max **65 536 bytes** (64 KB)
 - If topic has no subscribers, message is dropped (topic still created implicitly)
 
 ---
@@ -210,8 +210,8 @@ Sent once on connection establishment.
 
 | Limit | Value | Rationale |
 |-------|-------|-----------|
-| Max topic name length | 256 bytes | Prevents abuse, keeps lookups fast |
-| Max message payload | 64 KB | Prevents memory pressure from giant frames |
+| Max topic name length | 256 characters | Prevents abuse, keeps lookups fast |
+| Max message payload | 64 KB (65 536 bytes) | Prevents memory pressure from giant frames |
 | Max total frame size | 64 KB + overhead | Hard cutoff — reject with error |
 | Heartbeat interval | 30 seconds | Keep NATs and load balancers happy |
 | Heartbeat timeout | 60 seconds | Detect dead connections promptly |
@@ -265,21 +265,33 @@ These are intentionally excluded to keep the project focused:
 
 | Criteria | Status |
 |----------|--------|
-| SUBSCRIBE / UNSUBSCRIBE work with acks | ☐ |
-| PUBLISH delivers to all topic subscribers | ☐ |
-| LIST_TOPICS returns only active topics | ☐ |
-| Topics created implicitly, destroyed when empty | ☐ |
-| Heartbeat ping/pong with timeout cleanup | ☐ |
-| Connection info sent on connect | ☐ |
-| Thread-safe under concurrent load | ☐ |
-| Proper cleanup on disconnect (no leaks) | ☐ |
-| Resilient to malformed input | ☐ |
-| Respects size limits (topic name, payload) | ☐ |
-| Message ordering preserved per topic | ☐ |
+| SUBSCRIBE / UNSUBSCRIBE work with acks | Done |
+| PUBLISH delivers to all topic subscribers | Done |
+| LIST_TOPICS returns only active topics | Done |
+| Topics created implicitly, destroyed when empty | Done |
+| Heartbeat ping/pong with timeout cleanup | Deferred |
+| Connection info sent on connect | Done |
+| Thread-safe under concurrent load | Done |
+| Proper cleanup on disconnect (no leaks) | Done |
+| Resilient to malformed input | Done |
+| Respects size limits (topic name, payload) | Done |
+| Message ordering preserved per topic | Done |
 
 ---
 
-## Starter Architecture
+## Architecture
+
+```
+cmd/main.go                — Entry point
+internal/
+  hub/hub.go               — Topic/Client structs, topic lifecycle, broadcast
+  client/client.go         — ReadLoop, WriteLoop, Cleanup, connection factory
+  handler/handler.go       — Message dispatch, validation, action handlers
+  server/server.go         — HTTP server, WebSocket upgrade, /topics /clients endpoints
+pkg/
+  response.server.go       — Response types (Ack, Message, Error, etc.)
+  response.client.go       — Request types with validator tags
+```
 
 ```
 ┌─────────────┐      ┌─────────────────────────┐      ┌─────────────┐
@@ -295,18 +307,61 @@ These are intentionally excluded to keep the project focused:
                      │  ┌─────────────────┐    │
                      │  │  Client Registry│    │
                      │  │  A → {news}     │    │
-                     │  │  B → {news}     │    │ 
+                     │  │  B → {news}     │    │
                      │  │  C → {chat}     │    │
                      │  └─────────────────┘    │
                      │                         │
                      └─────────────────────────┘
 ```
 
-The broker maintains two core structures:
-- **Topic Map:** topic name → set of connected clients
-- **Client Registry:** client → set of subscribed topics
+Each connection spawns two goroutines (ReadLoop + WriteLoop) sharing a `context.WithCancel`. When either detects a failure, it cancels the context, stopping both loops and triggering cleanup.
 
-Both must be protected for concurrent access. When a client disconnects, use the client registry to efficiently clean up all topic subscriptions without scanning every topic.
+---
+
+## Running & Testing
+
+```bash
+# Start the server
+go run cmd/main.go
+
+# Connect with websocat
+websocat ws://localhost:8080/ws
+
+# Or with wscat
+wscat -c ws://localhost:8080/ws
+```
+
+### Example session
+
+```json
+→ {"action":"subscribe","topic":"news"}
+← {"type":"ack","action":"subscribe","topic":"news"}
+
+→ {"action":"publish","topic":"news","payload":{"headline":"Go 1.26 released"}}
+← {"type":"ack","action":"publish","topic":"news"}
+
+→ {"action":"ping"}
+← {"type":"pong"}
+
+→ {"action":"unsubscribe","topic":"news"}
+← {"type":"ack","action":"unsubscribe","topic":"news"}
+```
+
+### REST endpoints
+
+```bash
+# List active topics
+curl http://localhost:8080/topics
+
+# List connected clients
+curl http://localhost:8080/clients
+```
+
+### Run tests
+
+```bash
+go test ./... -v
+```
 
 ---
 
